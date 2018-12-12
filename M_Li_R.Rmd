@@ -1,0 +1,220 @@
+---
+
+output: html_document
+---
+```{r}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+rm(list = ls(all=TRUE))
+```
+
+```{r}
+getwd()
+```
+
+```{r}
+customerData=read.csv("CustomerData.csv", header = T)
+```
+
+```{r}
+summary(customerData)
+```
+
+```{r}
+sum(is.na(customerData))
+```
+
+```{r}
+
+as.factor(customerData$City)
+str(customerData)
+```
+
+```{r}
+pairs(~CustomerID+City+NoOfChildren+MinAgeOfChild+MaxAgeOfChild+Tenure+FrquncyOfPurchase+NoOfUnitsPurchased+FrequencyOFPlay+NoOfGamesPlayed+NoOfGamesBought+FavoriteChannelOfTransaction+FavoriteGame,data=customerData,main="Scatterplot matrix with selected attributes")
+```
+
+```{r}
+library(dummies)
+d1= dummy(customerData$FavoriteGame)
+d2=dummy(customerData$FavoriteChannelOfTransaction)
+customerData_dummy=data.frame(customerData, d1, d2)
+str(customerData_dummy)
+head(customerData_dummy)
+customerData_dummy=subset(customerData_dummy, select= -c(FavoriteGame, FavoriteChannelOfTransaction))
+```
+
+
+```{r fig.height=8, fig.width=9}
+library(corrplot)
+
+correlation_XPairwise = cor(customerData_dummy)
+corrplot(cor(customerData_dummy, use = "complete.obs"), method = "number")
+
+```
+
+
+
+Visualisation and data processing is doned. Now model should be prepared
+Create train and test datas
+
+
+```{r}
+set.seed(123)
+train_rows <- sample(x = 1:nrow(customerData), size = 0.7*nrow(customerData))
+train_data=  customerData[train_rows, ]
+test_data= customerData[-train_rows, ]
+
+```
+
+Target Variable should be excluded from standardisation. Here target Variable(response variable) is TotalRevenueGenerated.
+
+
+```{r}
+
+library(caret)
+
+std_model <- preProcess(train_data[, !names(train_data) %in% c("TotalRevenueGenerated")], method = c("center","scale"))
+std_model
+
+train_data[, !names(train_data) %in% c("TotalRevenueGenerated")] <- predict(object = std_model, newdata = train_data[, !names(train_data) %in% c("TotalRevenueGenerated")])
+
+test_data[, !names(train_data) %in% c("TotalRevenueGenerated")] <- predict(object = std_model, newdata = test_data[, !names(train_data) %in% c("TotalRevenueGenerated")])
+```
+
+#1st model(nothing done after preprocessing of data)
+
+
+```{r}
+model_basic <- lm(formula = TotalRevenueGenerated~. , data = train_data)
+summary(model_basic)
+```
+
+```{r}
+par(mfrow = c(2,2))
+
+plot(model_basic)
+```
+
+
+# 2nd model- Leverage plot is observed. 
+ 
+```{r}
+lev= hat(model.matrix(model_basic))
+plot(lev)
+
+```
+
+```{r}
+train_data[lev>0.3,]
+train_data_lev<-train_data[-(lev>0.3),]
+dim(train_data_lev)
+```
+
+```{r}
+cook = cooks.distance(model_basic)
+plot(cook,ylab="Cook's distances")
+max=as.numeric(which.max(cook))
+max
+points(max,cook[max],col='red', pch=19)
+train_cook<-train_data_lev[-max,]
+dim(train_cook)
+```
+
+```{r}
+model_basic2 <- lm(formula = TotalRevenueGenerated~. , data = train_cook)
+summary(model_basic2)
+```
+
+#3rd model- stepAIC is used to exclude further outliers
+
+```{r}
+library(MASS)
+
+model_3 <- stepAIC(model_basic2, direction = "both")
+
+summary(model_3)
+
+par(mfrow = c(2,2))
+
+plot(model_3)
+```
+
+#4th model-Taking VIF values to exclude highly collinear variables from the model
+
+```{r}
+library(car)
+
+vif(model_basic)
+
+vif(model_3)
+```
+
+```{r}
+cor(customerData$NoOfGamesBought , customerData$FrquncyOfPurchase,use='complete.obs')
+cor(customerData$NoOfUnitsPurchased, customerData$FrquncyOfPurchase,use='complete.obs')
+cor(customerData$NoOfUnitsPurchased, customerData$NoOfGamesBought,use='complete.obs')
+```
+
+
+Seeing correlation between all the variables which have highest VIFs, we are excluding 2 variables with highest VIFs because correlation between all the variables is very high. This ensures that max data is taken into consideration with least number of variables.
+
+
+
+```{r}
+
+
+names(train_data)
+model_4 <- lm(formula = TotalRevenueGenerated ~ City   + NoOfChildren + MinAgeOfChild + MaxAgeOfChild + Tenure  + FrequencyOFPlay + NoOfGamesPlayed  + NoOfUnitsPurchased+ FavoriteChannelOfTransaction+ FavoriteGame  , data = train_data)
+summary(model_4)
+
+#summary(model_basic)
+#summary(model_basic2)
+#summary(model_3)
+#summary(model_4)
+#par(mfrow = c(2,2))
+
+#plot(model_4)
+
+#vif(model_4)
+
+```
+
+
+#Evaluation of models is done and finally one model is chosen accordingly
+
+
+```{r}
+preds_model <- predict(model_4, test_data[, !(names(test_data) %in% c("TotalRevenueGenerated"))])
+
+#preds_model
+```
+
+Change model_4 to model_3 in above and below line to see the effect of overfitting in the data
+
+```{r}
+library(DMwR)
+
+# Error verification on train data
+regr.eval(train_data$TotalRevenueGenerated, model_4$fitted.values)
+
+```
+
+```{r}
+regr.eval(test_data$TotalRevenueGenerated, preds_model)
+```
+
+R^2 value is least for 4th model but high R^2 values only can't be taken into consideration for best model.
+Among all the four models(model_basic, model_basic2, model_3 and model_4) I prepared above, I'm taking model_4 as my train model because error difference between train and test data is least for this model. 
